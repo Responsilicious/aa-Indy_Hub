@@ -37,6 +37,7 @@ from .views.industry import (
 )
 from .views.industry import (
     edit_simulation_name,
+    industry_job_slots,
     personnal_bp_list,
     personnal_job_list,
     production_simulations_list,
@@ -120,6 +121,7 @@ urlpatterns = [
     ),
     path("all-bp/", all_bp_list, name="all_bp_list"),
     path("personnal-jobs/", personnal_job_list, name="personnal_job_list"),
+    path("job-slots/", industry_job_slots, name="industry_job_slots"),
     path(
         "corporation-jobs/",
         personnal_job_list,

@@ -5613,3 +5613,178 @@ def edit_simulation_name(request, simulation_id):
     }
 
     return render(request, "indy_hub/industry/edit_simulation_name.html", context)
+
+
+@login_required
+@indy_hub_access_required
+@token_required(
+    scopes=[
+        "esi-skills.read_skills.v1",
+        "esi-industry.read_character_jobs.v1",
+        STRUCTURE_SCOPE,
+    ]
+)
+def industry_job_slots(request):
+    """Display industry job slot capacity and availability for each character."""
+    from ..services.esi_client import ESIClientError, shared_client
+
+    # Define skill IDs for slot calculation
+    SKILL_MASS_PRODUCTION = 3387
+    SKILL_ADVANCED_MASS_PRODUCTION = 24625
+    SKILL_LABORATORY_OPERATION = 3406
+    SKILL_ADVANCED_LABORATORY_OPERATION = 24624
+    SKILL_MASS_REACTIONS = 45748
+    SKILL_ADVANCED_REACTIONS = 45749
+
+    # Define activity IDs for job categorization
+    ACTIVITY_MANUFACTURING = 1
+    ACTIVITY_RESEARCHING_TE = 3
+    ACTIVITY_RESEARCHING_ME = 4
+    ACTIVITY_COPYING = 5
+    ACTIVITY_INVENTION = 8
+    ACTIVITY_REACTIONS = 9
+
+    # Get all characters owned by the user
+    user_characters = CharacterOwnership.objects.filter(
+        user=request.user
+    ).select_related("character")
+
+    character_slots_data = []
+    total_manufacturing_slots = 0
+    total_manufacturing_used = 0
+    total_research_slots = 0
+    total_research_used = 0
+    total_reactions_slots = 0
+    total_reactions_used = 0
+
+    for ownership in user_characters:
+        character_id = ownership.character.character_id
+        character_name = ownership.character.character_name
+
+        # Initialize slot data
+        manufacturing_slots = 1  # Base slot
+        research_slots = 1  # Base slot
+        reactions_slots = 0  # No base slot for reactions
+
+        # Fetch character skills
+        try:
+            skills_data = shared_client.fetch_character_skills(character_id)
+            skills = {
+                skill["skill_id"]: skill.get("active_skill_level", 0)
+                for skill in skills_data.get("skills", [])
+            }
+
+            # Calculate manufacturing slots
+            manufacturing_slots += skills.get(SKILL_MASS_PRODUCTION, 0)
+            manufacturing_slots += skills.get(SKILL_ADVANCED_MASS_PRODUCTION, 0)
+
+            # Calculate research slots
+            research_slots += skills.get(SKILL_LABORATORY_OPERATION, 0)
+            research_slots += skills.get(SKILL_ADVANCED_LABORATORY_OPERATION, 0)
+
+            # Calculate reactions slots (if Mass Reactions is trained)
+            if SKILL_MASS_REACTIONS in skills:
+                reactions_slots = 1  # Base slot
+                reactions_slots += skills.get(SKILL_MASS_REACTIONS, 0)
+                reactions_slots += skills.get(SKILL_ADVANCED_REACTIONS, 0)
+
+        except ESIClientError as e:
+            logger.warning(
+                f"Failed to fetch skills for character {character_id}: {e}"
+            )
+            # Continue with base slots
+
+        # Count active jobs for this character
+        active_jobs = IndustryJob.objects.filter(
+            character_id=character_id,
+            status="active",
+        )
+
+        manufacturing_used = active_jobs.filter(
+            activity_id=ACTIVITY_MANUFACTURING
+        ).count()
+
+        research_used = active_jobs.filter(
+            activity_id__in=[
+                ACTIVITY_RESEARCHING_TE,
+                ACTIVITY_RESEARCHING_ME,
+                ACTIVITY_COPYING,
+                ACTIVITY_INVENTION,
+            ]
+        ).count()
+
+        reactions_used = active_jobs.filter(activity_id=ACTIVITY_REACTIONS).count()
+
+        # Calculate available slots
+        manufacturing_available = max(0, manufacturing_slots - manufacturing_used)
+        research_available = max(0, research_slots - research_used)
+        reactions_available = max(0, reactions_slots - reactions_used)
+
+        # Add to character data
+        character_slots_data.append(
+            {
+                "character_id": character_id,
+                "character_name": character_name,
+                "manufacturing": {
+                    "total": manufacturing_slots,
+                    "used": manufacturing_used,
+                    "available": manufacturing_available,
+                    "utilization_percent": (
+                        int((manufacturing_used / manufacturing_slots) * 100)
+                        if manufacturing_slots > 0
+                        else 0
+                    ),
+                },
+                "research": {
+                    "total": research_slots,
+                    "used": research_used,
+                    "available": research_available,
+                    "utilization_percent": (
+                        int((research_used / research_slots) * 100)
+                        if research_slots > 0
+                        else 0
+                    ),
+                },
+                "reactions": {
+                    "total": reactions_slots,
+                    "used": reactions_used,
+                    "available": reactions_available,
+                    "utilization_percent": (
+                        int((reactions_used / reactions_slots) * 100)
+                        if reactions_slots > 0
+                        else 0
+                    ),
+                },
+            }
+        )
+
+        # Update totals
+        total_manufacturing_slots += manufacturing_slots
+        total_manufacturing_used += manufacturing_used
+        total_research_slots += research_slots
+        total_research_used += research_used
+        total_reactions_slots += reactions_slots
+        total_reactions_used += reactions_used
+
+    # Sort by character name
+    character_slots_data.sort(key=lambda x: x["character_name"])
+
+    context = build_nav_context(request)
+    context.update(
+        {
+            "character_slots_data": character_slots_data,
+            "total_characters": len(character_slots_data),
+            "total_manufacturing_slots": total_manufacturing_slots,
+            "total_manufacturing_used": total_manufacturing_used,
+            "total_manufacturing_available": total_manufacturing_slots
+            - total_manufacturing_used,
+            "total_research_slots": total_research_slots,
+            "total_research_used": total_research_used,
+            "total_research_available": total_research_slots - total_research_used,
+            "total_reactions_slots": total_reactions_slots,
+            "total_reactions_used": total_reactions_used,
+            "total_reactions_available": total_reactions_slots - total_reactions_used,
+        }
+    )
+
+    return render(request, "indy_hub/industry/job_slots.html", context)

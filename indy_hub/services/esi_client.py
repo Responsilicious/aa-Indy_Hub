@@ -158,6 +158,22 @@ class ESIClient:
             endpoint=f"/characters/{character_id}/industry/jobs/",
         )
 
+    def fetch_character_skills(self, character_id: int) -> dict:
+        """Return the skills for a character."""
+        access_token = self._get_access_token(
+            character_id, "esi-skills.read_skills.v1"
+        )
+        url = f"{self.base_url}/characters/{character_id}/skills/"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = {"datasource": "tranquility"}
+        response = self._request("GET", url, headers=headers, params=params)
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ESIClientError(
+                f"ESI {url} returned an unexpected payload type: {type(payload)}"
+            )
+        return payload
+
     def fetch_corporation_blueprints(
         self, corporation_id: int, *, character_id: int
     ) -> list[dict]:

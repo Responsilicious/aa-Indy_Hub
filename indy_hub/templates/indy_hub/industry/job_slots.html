@@ -1,0 +1,344 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block page_title %}{% trans "Industry Job Slots Overview" %}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+<style>
+.job-slots-container {
+    padding: 2rem 0;
+}
+
+.stats-card {
+    background: var(--bs-card-bg, #fff);
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    transition: transform 0.2s;
+}
+
+.stats-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.stats-card .stat-value {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom: 0.25rem;
+}
+
+.stats-card .stat-label {
+    color: var(--bs-secondary, #6c757d);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.slots-table {
+    background: var(--bs-card-bg, #fff);
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.slots-table table {
+    margin-bottom: 0;
+}
+
+.slots-table th {
+    background: var(--bs-primary, #0d6efd);
+    color: white;
+    font-weight: 600;
+    text-align: center;
+    padding: 1rem;
+}
+
+.slots-table td {
+    padding: 1rem;
+    vertical-align: middle;
+}
+
+.character-name {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.character-portrait {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+}
+
+.slot-info {
+    text-align: center;
+}
+
+.slot-text {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.slot-progress {
+    height: 24px;
+    background: var(--bs-gray-200, #e9ecef);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+}
+
+.slot-progress-bar {
+    height: 100%;
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+.availability-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 0.5rem;
+}
+
+.availability-high {
+    background: #28a745;
+}
+
+.availability-medium {
+    background: #ffc107;
+}
+
+.availability-low {
+    background: #dc3545;
+}
+
+.progress-manufacturing {
+    background: linear-gradient(90deg, #0d6efd, #0a58ca);
+}
+
+.progress-research {
+    background: linear-gradient(90deg, #6f42c1, #5a32a3);
+}
+
+.progress-reactions {
+    background: linear-gradient(90deg, #fd7e14, #ca6510);
+}
+
+.summary-totals {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.summary-card {
+    flex: 1;
+    min-width: 0;
+}
+
+@media (max-width: 768px) {
+    .summary-totals {
+        flex-direction: column;
+    }
+}
+</style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid job-slots-container">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1">
+                    <i class="fas fa-industry me-2"></i>
+                    {% trans "Industry Job Slots Overview" %}
+                </h2>
+                <p class="description">{% trans "View industry job slot capacity and availability for your characters" %}</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-cogs header-bg"></i>
+    </div>
+
+    <!-- Summary Statistics -->
+    <div class="summary-totals">
+        <div class="summary-card">
+            <div class="stats-card">
+                <div class="text-center">
+                    <div class="stat-value text-info">{{ total_characters }}</div>
+                    <div class="stat-label">{% trans "Characters" %}</div>
+                </div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="stats-card">
+                <div class="text-center">
+                    <div class="stat-value text-primary">{{ total_manufacturing_available }} / {{ total_manufacturing_slots }}</div>
+                    <div class="stat-label">{% trans "Manufacturing Slots" %}</div>
+                </div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="stats-card">
+                <div class="text-center">
+                    <div class="stat-value" style="color: #6f42c1;">{{ total_research_available }} / {{ total_research_slots }}</div>
+                    <div class="stat-label">{% trans "Research Slots" %}</div>
+                </div>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="stats-card">
+                <div class="text-center">
+                    <div class="stat-value" style="color: #fd7e14;">{{ total_reactions_available }} / {{ total_reactions_slots }}</div>
+                    <div class="stat-label">{% trans "Reaction Slots" %}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Character Slots Table -->
+    <div class="slots-table">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th style="text-align: left;">{% trans "Character" %}</th>
+                    <th>{% trans "Manufacturing" %}</th>
+                    <th>{% trans "Research" %}</th>
+                    <th>{% trans "Reactions" %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for char in character_slots_data %}
+                <tr>
+                    <td>
+                        <div class="character-name">
+                            <img src="https://images.evetech.net/characters/{{ char.character_id }}/portrait?size=64" 
+                                 alt="{{ char.character_name }}" 
+                                 class="character-portrait">
+                            <span>{{ char.character_name }}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="slot-info">
+                            {% if char.manufacturing.utilization_percent < 50 %}
+                                <span class="availability-indicator availability-high"></span>
+                            {% elif char.manufacturing.utilization_percent < 90 %}
+                                <span class="availability-indicator availability-medium"></span>
+                            {% else %}
+                                <span class="availability-indicator availability-low"></span>
+                            {% endif %}
+                            <div class="slot-text">{{ char.manufacturing.available }} / {{ char.manufacturing.total }}</div>
+                            <div class="slot-progress">
+                                <div class="slot-progress-bar progress-manufacturing" 
+                                     style="width: {{ char.manufacturing.utilization_percent }}%;">
+                                    {% if char.manufacturing.utilization_percent > 15 %}
+                                        {{ char.manufacturing.utilization_percent }}%
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="slot-info">
+                            {% if char.research.utilization_percent < 50 %}
+                                <span class="availability-indicator availability-high"></span>
+                            {% elif char.research.utilization_percent < 90 %}
+                                <span class="availability-indicator availability-medium"></span>
+                            {% else %}
+                                <span class="availability-indicator availability-low"></span>
+                            {% endif %}
+                            <div class="slot-text">{{ char.research.available }} / {{ char.research.total }}</div>
+                            <div class="slot-progress">
+                                <div class="slot-progress-bar progress-research" 
+                                     style="width: {{ char.research.utilization_percent }}%;">
+                                    {% if char.research.utilization_percent > 15 %}
+                                        {{ char.research.utilization_percent }}%
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="slot-info">
+                            {% if char.reactions.total > 0 %}
+                                {% if char.reactions.utilization_percent < 50 %}
+                                    <span class="availability-indicator availability-high"></span>
+                                {% elif char.reactions.utilization_percent < 90 %}
+                                    <span class="availability-indicator availability-medium"></span>
+                                {% else %}
+                                    <span class="availability-indicator availability-low"></span>
+                                {% endif %}
+                                <div class="slot-text">{{ char.reactions.available }} / {{ char.reactions.total }}</div>
+                                <div class="slot-progress">
+                                    <div class="slot-progress-bar progress-reactions" 
+                                         style="width: {{ char.reactions.utilization_percent }}%;">
+                                        {% if char.reactions.utilization_percent > 15 %}
+                                            {{ char.reactions.utilization_percent }}%
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="text-muted">
+                                    <small>{% trans "No reaction slots" %}</small>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted py-5">
+                        <i class="fas fa-user-astronaut fa-3x mb-3"></i>
+                        <p>{% trans "No characters found. Please add characters to your account." %}</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Legend -->
+    <div class="mt-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">{% trans "Legend" %}</h5>
+                <div class="d-flex flex-wrap gap-4">
+                    <div>
+                        <span class="availability-indicator availability-high"></span>
+                        <span>{% trans "Good availability (< 50% used)" %}</span>
+                    </div>
+                    <div>
+                        <span class="availability-indicator availability-medium"></span>
+                        <span>{% trans "Limited availability (50-90% used)" %}</span>
+                    </div>
+                    <div>
+                        <span class="availability-indicator availability-low"></span>
+                        <span>{% trans "Low availability (> 90% used)" %}</span>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle me-1"></i>
+                        {% trans "Slots are calculated based on trained skills. Manufacturing and Research have 1 base slot each. Reactions require Mass Reactions skill to be trained." %}
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
