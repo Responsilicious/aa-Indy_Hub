@@ -57,6 +57,46 @@
     padding: 1rem;
 }
 
+.slots-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.slots-table th.sortable:hover {
+    background: var(--bs-primary-dark, #0a58ca);
+}
+
+.slots-table th .sort-icon {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    opacity: 0.6;
+}
+
+.slots-table th.sorted-asc .sort-icon::before {
+    content: "▲";
+    opacity: 1;
+}
+
+.slots-table th.sorted-desc .sort-icon::before {
+    content: "▼";
+    opacity: 1;
+}
+
+.next-free-time {
+    font-size: 0.75rem;
+    color: var(--bs-secondary, #6c757d);
+    font-style: italic;
+    margin-top: 0.25rem;
+}
+
+.scope-selector {
+    margin-bottom: 1.5rem;
+}
+
+.scope-selector .btn-group {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 .slots-table td {
     padding: 1rem;
     vertical-align: middle;
@@ -163,8 +203,11 @@
                 <h2 class="h3 mb-1">
                     <i class="fas fa-industry me-2"></i>
                     {% trans "Industry Job Slots Overview" %}
+                    {% if is_corporation_scope %}
+                        <span class="badge bg-info ms-2">{% trans "Corporation" %}</span>
+                    {% endif %}
                 </h2>
-                <p class="description">{% trans "View industry job slot capacity and availability for your characters" %}</p>
+                <p class="description">{% trans "View industry job slot capacity and availability" %}</p>
             </div>
             <div class="d-flex gap-2">
                 <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
@@ -174,6 +217,22 @@
         </div>
         <i class="fas fa-cogs header-bg"></i>
     </div>
+
+    <!-- Scope Selector -->
+    {% if has_corporate_perm %}
+    <div class="scope-selector">
+        <div class="btn-group" role="group">
+            <a href="?scope=character{% if current_sort %}&sort={{ current_sort }}&order={{ current_order }}{% endif %}" 
+               class="btn {% if not is_corporation_scope %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                <i class="fas fa-user me-1"></i>{% trans "My Characters" %}
+            </a>
+            <a href="?scope=corporation{% if current_sort %}&sort={{ current_sort }}&order={{ current_order }}{% endif %}" 
+               class="btn {% if is_corporation_scope %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                <i class="fas fa-building me-1"></i>{% trans "Corporation" %}
+            </a>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Summary Statistics -->
     <div class="summary-totals">
@@ -216,10 +275,30 @@
         <table class="table table-hover">
             <thead>
                 <tr>
-                    <th style="text-align: left;">{% trans "Character" %}</th>
-                    <th>{% trans "Manufacturing" %}</th>
-                    <th>{% trans "Research" %}</th>
-                    <th>{% trans "Reactions" %}</th>
+                    <th style="text-align: left;" class="sortable {% if current_sort == 'character_name' %}sorted-{{ current_order }}{% endif %}">
+                        <a href="?scope={{ scope }}&sort=character_name&order={% if current_sort == 'character_name' and current_order == 'asc' %}desc{% else %}asc{% endif %}" class="text-white text-decoration-none">
+                            {% trans "Character" %}
+                            <span class="sort-icon"></span>
+                        </a>
+                    </th>
+                    <th class="sortable {% if current_sort == 'manufacturing_avail' %}sorted-{{ current_order }}{% endif %}">
+                        <a href="?scope={{ scope }}&sort=manufacturing_avail&order={% if current_sort == 'manufacturing_avail' and current_order == 'asc' %}desc{% else %}asc{% endif %}" class="text-white text-decoration-none">
+                            {% trans "Manufacturing" %}
+                            <span class="sort-icon"></span>
+                        </a>
+                    </th>
+                    <th class="sortable {% if current_sort == 'research_avail' %}sorted-{{ current_order }}{% endif %}">
+                        <a href="?scope={{ scope }}&sort=research_avail&order={% if current_sort == 'research_avail' and current_order == 'asc' %}desc{% else %}asc{% endif %}" class="text-white text-decoration-none">
+                            {% trans "Research" %}
+                            <span class="sort-icon"></span>
+                        </a>
+                    </th>
+                    <th class="sortable {% if current_sort == 'reactions_avail' %}sorted-{{ current_order }}{% endif %}">
+                        <a href="?scope={{ scope }}&sort=reactions_avail&order={% if current_sort == 'reactions_avail' and current_order == 'asc' %}desc{% else %}asc{% endif %}" class="text-white text-decoration-none">
+                            {% trans "Reactions" %}
+                            <span class="sort-icon"></span>
+                        </a>
+                    </th>
                 </tr>
             </thead>
             <tbody>
@@ -251,6 +330,9 @@
                                     {% endif %}
                                 </div>
                             </div>
+                            {% if char.manufacturing.next_free and char.manufacturing.available == 0 %}
+                                <div class="next-free-time">{% trans "Next free:" %} {{ char.manufacturing.next_free }}</div>
+                            {% endif %}
                         </div>
                     </td>
                     <td>
@@ -271,6 +353,9 @@
                                     {% endif %}
                                 </div>
                             </div>
+                            {% if char.research.next_free and char.research.available == 0 %}
+                                <div class="next-free-time">{% trans "Next free:" %} {{ char.research.next_free }}</div>
+                            {% endif %}
                         </div>
                     </td>
                     <td>
@@ -292,6 +377,9 @@
                                         {% endif %}
                                     </div>
                                 </div>
+                                {% if char.reactions.next_free and char.reactions.available == 0 %}
+                                    <div class="next-free-time">{% trans "Next free:" %} {{ char.reactions.next_free }}</div>
+                                {% endif %}
                             {% else %}
                                 <div class="text-muted">
                                     <small>{% trans "No reaction slots" %}</small>
