@@ -2463,6 +2463,9 @@ class ESIContractItem(models.Model):
 class CharacterSkillsCache(models.Model):
     """Cached character skills from ESI to reduce API calls."""
 
+    # Cache time-to-live in hours
+    CACHE_TTL_HOURS = 3
+
     character_id = models.BigIntegerField(primary_key=True)
     skills_json = models.JSONField(
         help_text="JSON data of character skills from ESI"
@@ -2477,7 +2480,9 @@ class CharacterSkillsCache(models.Model):
     def __str__(self):
         return f"Skills for character {self.character_id}"
 
-    def is_expired(self, hours=3):
+    def is_expired(self, hours=None):
         """Check if the cache is older than the specified hours."""
+        if hours is None:
+            hours = self.CACHE_TTL_HOURS
         expiry_time = timezone.now() - timedelta(hours=hours)
         return self.cached_at < expiry_time

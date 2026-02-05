@@ -5624,7 +5624,7 @@ def edit_simulation_name(request, simulation_id):
         STRUCTURE_SCOPE,
     ]
 )
-def industry_job_slots(request, scope="character"):
+def industry_job_slots(request):
     """Display industry job slot capacity and availability for each character."""
     from ..services.esi_client import ESIClientError, shared_client
     from ..models import CharacterSkillsCache
@@ -5646,8 +5646,7 @@ def industry_job_slots(request, scope="character"):
     ACTIVITY_REACTIONS = 9
 
     # Handle scope parameter (character or corporation)
-    scope_param = request.GET.get("scope")
-    scope = (scope_param or scope or "character").lower()
+    scope = request.GET.get("scope", "character").lower()
     if scope not in {"character", "corporation"}:
         scope = "character"
 
@@ -5707,19 +5706,17 @@ def industry_job_slots(request, scope="character"):
         reactions_slots = 0  # No base slot for reactions
 
         # Try to get cached skills first
-        skills_cache = None
+        cached_skills_data = None
         try:
             skills_cache = CharacterSkillsCache.objects.get(character_id=character_id)
             if not skills_cache.is_expired():
                 # Use cached data
-                skills_data = skills_cache.skills_json
-            else:
-                skills_cache = None  # Cache expired, fetch fresh
+                cached_skills_data = skills_cache.skills_json
         except CharacterSkillsCache.DoesNotExist:
             pass
 
         # Fetch character skills if not cached or expired
-        if skills_cache is None:
+        if cached_skills_data is None:
             try:
                 skills_data = shared_client.fetch_character_skills(character_id)
                 
@@ -5737,6 +5734,8 @@ def industry_job_slots(request, scope="character"):
                 )
                 # Continue with base slots
                 skills_data = {"skills": []}
+        else:
+            skills_data = cached_skills_data
 
         # Extract skills
         skills = {
@@ -5808,6 +5807,11 @@ def industry_job_slots(request, scope="character"):
             
             delta = end_date - now
             total_seconds = int(delta.total_seconds())
+            
+            # Handle very short durations
+            if total_seconds < 60:
+                return "< 1m"
+            
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
             
