@@ -3,6 +3,37 @@
 ## Overview
 This feature provides a comprehensive view of industry job slot capacity and availability for all characters linked to the user's account. It helps industrialists quickly identify which characters have free capacity for new manufacturing, research, or reaction jobs.
 
+## New Features (Enhanced Version)
+
+### 1. **Skill Data Caching**
+- Skills are cached for 3 hours to reduce ESI API calls
+- Automatic cache refresh when data expires
+- Significantly improves page load times on repeated visits
+- Reduces load on ESI servers
+
+### 2. **Corporation View**
+- View job slots for all corporation members
+- Requires `can_manage_corp_bp_requests` permission
+- Toggle between personal and corporation views
+- Separate summary statistics for corporation scope
+
+### 3. **Time to Next Free Slot**
+- Shows when the next slot will become available
+- Displays human-readable time format (e.g., "2h 15m", "1d 3h")
+- Only shown when category is at full capacity
+- Helps plan job queuing strategy
+
+### 4. **Sortable Columns**
+- Click any column header to sort
+- Sort by:
+  - Character name (alphabetical)
+  - Manufacturing slots available
+  - Research slots available
+  - Reactions slots available
+  - Average utilization percentage
+- Toggle between ascending and descending order
+- Sort state preserved across page refreshes
+
 ## Features
 
 ### Slot Calculation
@@ -81,32 +112,49 @@ For each character, the view displays:
 1. Navigate to the main Indy Hub dashboard
 2. In the Industry section, click the **Slots** button
 3. The view displays:
+   - **Scope Selector** (if you have corporation permissions):
+     - "My Characters": Show only your own characters
+     - "Corporation": Show all corporation members' characters
    - Summary statistics at the top
    - Detailed character breakdown in a table
    - Color-coded indicators showing utilization levels
-   - Legend explaining the color codes
+   - Time until next slot becomes available (when fully utilized)
+   - Sortable column headers - click to sort
+4. Click any column header to sort the table:
+   - Click once for ascending order
+   - Click again for descending order
+   - Sort icon shows current sort direction
 
 ## Use Cases
 
 ### Finding Available Characters
 Quickly identify which characters have free slots to start new jobs without checking each one individually in-game.
 
+### Corporation Management
+View slot availability across all corporation members to optimize job distribution.
+
 ### Resource Planning
-Plan job scheduling across multiple characters by seeing the complete capacity picture.
+Plan job scheduling across multiple characters by seeing the complete capacity picture and when slots will become available.
 
 ### Skill Training Priority
 Identify characters that would benefit most from training industry skills to increase slot capacity.
 
 ### Bottleneck Identification
-Spot characters that are at or near capacity and may need job redistribution.
+Spot characters that are at or near capacity and may need job redistribution. See when their next slot becomes free.
+
+### Quick Sorting
+Sort by available slots to instantly find characters with the most capacity, or by utilization to find the busiest characters.
 
 ## Database Impact
-- **Queries**: O(n) where n is the number of user characters
+- **Queries**: O(n) where n is the number of characters (user's or corporation)
   - One query to fetch character ownerships
-  - One ESI call per character for skills
-  - One query per character for active jobs
-- **No database writes**: This is a read-only view
-- **Caching**: ESI client includes retry logic and rate limiting
+  - One cache lookup per character for skills (or ESI call if cache miss/expired)
+  - One query per character for active jobs (with subqueries for next free slot)
+- **Database writes**: CharacterSkillsCache table (skills cached for 3 hours)
+- **Caching**: 
+  - Skill data cached in database for 3 hours (CharacterSkillsCache model)
+  - ESI client includes retry logic and rate limiting
+  - Significant performance improvement on repeat visits
 
 ## Testing
 Comprehensive test suite included in `indy_hub/tests/test_job_slots.py`:
@@ -116,27 +164,43 @@ Comprehensive test suite included in `indy_hub/tests/test_job_slots.py`:
 - ESI error handling
 - Totals calculation across multiple characters
 - Edge cases (no characters, no skills, etc.)
+- **NEW**: Skills caching and cache expiry
+- **NEW**: Corporation scope permission checks
+- **NEW**: Sorting by different columns
+- **NEW**: Next free slot time calculation
 
+## Models
+
+### CharacterSkillsCache
+New model to cache skill data:
 ## Security
 - ✅ No SQL injection vulnerabilities
 - ✅ Proper authentication and permission checks
-- ✅ Only displays data for characters owned by the authenticated user
+- ✅ Only displays data for characters owned by the authenticated user (or corporation members with permission)
+- ✅ Corporation view requires `can_manage_corp_bp_requests` permission
 - ✅ ESI token validation enforced
 - ✅ No XSS vulnerabilities (all user data properly escaped in templates)
+- ✅ Skills cache stored securely in database
 - ✅ CodeQL security scan passed with 0 alerts
 
-## Future Enhancements (Not Implemented)
+## Implemented Enhancements
 
-Possible future improvements could include:
+✅ **All features from the original "Future Enhancements" have been implemented:**
 
-1. **Caching**: Cache skill data for a few hours to reduce ESI calls
-2. **Corporation View**: Show slots for corporation members (with appropriate permissions)
-3. **Time to Free Slot**: Display when the next job completes to free a slot
-4. **Sorting**: Allow sorting the table by available slots, character name, or utilization
-5. **Filtering**: Filter to show only characters with available slots
-6. **Export**: Export the slot overview to CSV or JSON
-7. **Notifications**: Alert when slots become available
-8. **Historical Tracking**: Track slot utilization over time
+1. ✅ **Caching**: Skill data cached for 3 hours to reduce ESI calls
+2. ✅ **Corporation View**: Show slots for corporation members (with can_manage_corp_bp_requests permission)
+3. ✅ **Time to Free Slot**: Display when the next job completes to free a slot
+4. ✅ **Sorting**: Allow sorting the table by available slots, character name, or utilization
+
+## Future Enhancements
+
+Additional possible improvements:
+
+1. **Filtering**: Filter to show only characters with available slots
+2. **Export**: Export the slot overview to CSV or JSON
+3. **Notifications**: Alert when slots become available
+4. **Historical Tracking**: Track slot utilization over time
+5. **Mobile App Integration**: API endpoint for mobile apps
 
 ## References
 - EVE Online Industry Skills: https://wiki.eveuniversity.org/Industry

@@ -266,3 +266,161 @@ class IndustryJobSlotsTestCase(TestCase):
         self.assertEqual(context["total_characters"], 2)
         # Each character has 6 manufacturing slots (1 base + 5 skill)
         self.assertEqual(context["total_manufacturing_slots"], 12)
+
+    @patch("indy_hub.views.industry.shared_client")
+    def test_skills_caching(self, mock_client):
+        """Test that skills are cached and reused."""
+        from indy_hub.models import CharacterSkillsCache
+
+        # Mock skills response
+        skills_data = {
+            "skills": [
+                {"skill_id": 3387, "active_skill_level": 5},  # Mass Production
+            ]
+        }
+        mock_client.fetch_character_skills.return_value = skills_data
+
+        request = self.factory.get(reverse("indy_hub:industry_job_slots"))
+        request.user = self.user
+
+        with patch("indy_hub.views.industry.build_nav_context", return_value={}):
+            # First request - should call ESI
+            response = industry_job_slots(request)
+            self.assertEqual(mock_client.fetch_character_skills.call_count, 1)
+
+            # Second request - should use cache
+            mock_client.fetch_character_skills.reset_mock()
+            response = industry_job_slots(request)
+            self.assertEqual(mock_client.fetch_character_skills.call_count, 0)
+
+        # Verify cache was created
+        cache = CharacterSkillsCache.objects.get(character_id=self.character.character_id)
+        self.assertEqual(cache.skills_json, skills_data)
+
+    @patch("indy_hub.views.industry.shared_client")
+    def test_corporation_scope_permission(self, mock_client):
+        """Test corporation scope requires permission."""
+        mock_client.fetch_character_skills.return_value = {"skills": []}
+
+        request = self.factory.get(
+            reverse("indy_hub:industry_job_slots") + "?scope=corporation"
+        )
+        request.user = self.user
+
+        with patch("indy_hub.views.industry.build_nav_context", return_value={}):
+            with patch("indy_hub.views.industry.messages") as mock_messages:
+                response = industry_job_slots(request, scope="corporation")
+                # Should redirect due to missing permission
+                self.assertEqual(response.status_code, 302)
+                mock_messages.error.assert_called()
+
+    @patch("indy_hub.views.industry.shared_client")
+    def test_sorting_by_character_name(self, mock_client):
+        """Test sorting by character name."""
+        # Create second character
+        char2 = EveCharacter.objects.create(
+            character_id=654321,
+            character_name="Alpha Character",  # Will sort before "Test Character"
+            corporation_id=98765,
+            corporation_name="Test Corp",
+            corporation_ticker="TEST",
+        )
+        CharacterOwnership.objects.create(
+            user=self.user,
+            character=char2,
+            owner_hash="testhash2",
+        )
+
+        mock_client.fetch_character_skills.return_value = {"skills": []}
+
+        # Test ascending sort
+        request = self.factory.get(
+            reverse("indy_hub:industry_job_slots")
+            + "?sort=character_name&order=asc"
+        )
+        request.user = self.user
+
+        with patch("indy_hub.views.industry.build_nav_context", return_value={}):
+            response = industry_job_slots(request)
+
+        context = response.context_data
+        # Alpha Character should be first
+        self.assertEqual(
+            context["character_slots_data"][0]["character_name"],
+            "Alpha Character"
+        )
+
+    @patch("indy_hub.views.industry.shared_client")
+    def test_next_free_slot_calculation(self, mock_client):
+        """Test that next free slot time is calculated correctly."""
+        from datetime import timedelta
+
+        mock_client.fetch_character_skills.return_value = {"skills": []}
+
+        # Create an active manufacturing job ending in 2 hours
+        future_date = timezone.now() + timedelta(hours=2, minutes=15)
+        IndustryJob.objects.create(
+            owner_user=self.user,
+            character_id=self.character.character_id,
+            job_id=2000,
+            installer_id=self.character.character_id,
+            activity_id=1,  # Manufacturing
+            blueprint_type_id=1000,
+            runs=1,
+            status="active",
+            duration=3600,
+            start_date=timezone.now(),
+            end_date=future_date,
+        )
+
+        request = self.factory.get(reverse("indy_hub:industry_job_slots"))
+        request.user = self.user
+
+        with patch("indy_hub.views.industry.build_nav_context", return_value={}):
+            response = industry_job_slots(request)
+
+        context = response.context_data
+        char_data = context["character_slots_data"][0]
+        
+        # Should have manufacturing slot used
+        self.assertEqual(char_data["manufacturing"]["used"], 1)
+        
+        # Should have next_free time
+        self.assertIsNotNone(char_data["manufacturing"]["next_free"])
+        # Should be in format like "2h 15m"
+        self.assertIn("h", char_data["manufacturing"]["next_free"])
+
+    @patch("indy_hub.views.industry.shared_client")
+    def test_cache_expiry(self, mock_client):
+        """Test that expired cache is refreshed."""
+        from indy_hub.models import CharacterSkillsCache
+        from datetime import timedelta
+
+        # Create expired cache (4 hours old)
+        old_skills = {"skills": [{"skill_id": 3387, "active_skill_level": 1}]}
+        cache = CharacterSkillsCache.objects.create(
+            character_id=self.character.character_id,
+            skills_json=old_skills,
+            cached_at=timezone.now() - timedelta(hours=4),
+        )
+
+        # Mock fresh skills response
+        new_skills = {
+            "skills": [
+                {"skill_id": 3387, "active_skill_level": 5},  # Updated level
+            ]
+        }
+        mock_client.fetch_character_skills.return_value = new_skills
+
+        request = self.factory.get(reverse("indy_hub:industry_job_slots"))
+        request.user = self.user
+
+        with patch("indy_hub.views.industry.build_nav_context", return_value={}):
+            response = industry_job_slots(request)
+
+        # Should have called ESI to refresh expired cache
+        mock_client.fetch_character_skills.assert_called_once()
+
+        # Cache should be updated
+        cache.refresh_from_db()
+        self.assertEqual(cache.skills_json, new_skills)
