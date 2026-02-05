@@ -74,8 +74,11 @@
                                     {% else %}
                                     <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
                                     {% endif %}
+                                    <a class="btn btn-sm btn-outline-success" href="{% url 'indy_hub:industry_job_slots' %}">
+                                        <i class="fas fa-server me-1"></i>{% trans "Slots" %}
+                                    </a>
                                     <a class="btn btn-sm btn-outline-success" href="{% url 'indy_hub:personnal_job_list' %}">
-                                        {% trans "Open" %}
+                                        {% trans "Jobs" %}
                                     </a>
                                 </div>
                             </div>
