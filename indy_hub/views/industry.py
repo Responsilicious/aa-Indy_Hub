@@ -5613,3 +5613,322 @@ def edit_simulation_name(request, simulation_id):
     }
 
     return render(request, "indy_hub/industry/edit_simulation_name.html", context)
+
+
+@login_required
+@indy_hub_access_required
+@token_required(
+    scopes=[
+        "esi-skills.read_skills.v1",
+        "esi-industry.read_character_jobs.v1",
+        STRUCTURE_SCOPE,
+    ]
+)
+def industry_job_slots(request):
+    """Display industry job slot capacity and availability for each character."""
+    from ..services.esi_client import ESIClientError, shared_client
+    from ..models import CharacterSkillsCache
+
+    # Define skill IDs for slot calculation
+    SKILL_MASS_PRODUCTION = 3387
+    SKILL_ADVANCED_MASS_PRODUCTION = 24625
+    SKILL_LABORATORY_OPERATION = 3406
+    SKILL_ADVANCED_LABORATORY_OPERATION = 24624
+    SKILL_MASS_REACTIONS = 45748
+    SKILL_ADVANCED_MASS_REACTIONS = 45749
+
+    # Define activity IDs for job categorization
+    ACTIVITY_MANUFACTURING = 1
+    ACTIVITY_RESEARCHING_TE = 3
+    ACTIVITY_RESEARCHING_ME = 4
+    ACTIVITY_COPYING = 5
+    ACTIVITY_INVENTION = 8
+    ACTIVITY_REACTIONS = 9
+
+    # Handle scope parameter (character or corporation)
+    scope = request.GET.get("scope", "character").lower()
+    if scope not in {"character", "corporation"}:
+        scope = "character"
+
+    is_corporation_scope = scope == "corporation"
+    has_corporate_perm = request.user.has_perm("indy_hub.can_manage_corp_bp_requests")
+
+    if is_corporation_scope and not has_corporate_perm:
+        messages.error(
+            request,
+            _("You do not have permission to view corporation job slots."),
+        )
+        return redirect(reverse("indy_hub:industry_job_slots"))
+
+    # Get sorting parameters
+    sort_by = request.GET.get("sort", "character_name")
+    sort_order = request.GET.get("order", "asc")
+
+    # Get characters based on scope
+    if is_corporation_scope:
+        # Get user's corporation IDs
+        user_corp_ids = list(
+            CharacterOwnership.objects.filter(user=request.user)
+            .exclude(character__corporation_id__isnull=True)
+            .values_list("character__corporation_id", flat=True)
+            .distinct()
+        )
+        if not user_corp_ids:
+            identity = _resolve_user_identity(request.user)
+            if identity.corporation_id:
+                user_corp_ids = [identity.corporation_id]
+
+        # Get all characters in the user's corporation(s)
+        user_characters = CharacterOwnership.objects.filter(
+            character__corporation_id__in=user_corp_ids
+        ).select_related("character")
+    else:
+        # Get only user's own characters
+        user_characters = CharacterOwnership.objects.filter(
+            user=request.user
+        ).select_related("character")
+
+    character_slots_data = []
+    total_manufacturing_slots = 0
+    total_manufacturing_used = 0
+    total_research_slots = 0
+    total_research_used = 0
+    total_reactions_slots = 0
+    total_reactions_used = 0
+
+    for ownership in user_characters:
+        character_id = ownership.character.character_id
+        character_name = ownership.character.character_name
+
+        # Initialize slot data
+        manufacturing_slots = 1  # Base slot
+        research_slots = 1  # Base slot
+        reactions_slots = 0  # No base slot for reactions
+
+        # Try to get cached skills first
+        cached_skills_data = None
+        try:
+            skills_cache = CharacterSkillsCache.objects.get(character_id=character_id)
+            if not skills_cache.is_expired():
+                # Use cached data
+                cached_skills_data = skills_cache.skills_json
+        except CharacterSkillsCache.DoesNotExist:
+            pass
+
+        # Fetch character skills if not cached or expired
+        if cached_skills_data is None:
+            try:
+                skills_data = shared_client.fetch_character_skills(character_id)
+                
+                # Save to cache
+                CharacterSkillsCache.objects.update_or_create(
+                    character_id=character_id,
+                    defaults={
+                        "skills_json": skills_data,
+                        "cached_at": timezone.now(),
+                    },
+                )
+            except ESIClientError as e:
+                logger.warning(
+                    f"Failed to fetch skills for character {character_id}: {e}"
+                )
+                # Continue with base slots
+                skills_data = {"skills": []}
+        else:
+            skills_data = cached_skills_data
+
+        # Extract skills
+        skills = {
+            skill["skill_id"]: skill.get("active_skill_level", 0)
+            for skill in skills_data.get("skills", [])
+        }
+
+        # Calculate manufacturing slots
+        manufacturing_slots += skills.get(SKILL_MASS_PRODUCTION, 0)
+        manufacturing_slots += skills.get(SKILL_ADVANCED_MASS_PRODUCTION, 0)
+
+        # Calculate research slots
+        research_slots += skills.get(SKILL_LABORATORY_OPERATION, 0)
+        research_slots += skills.get(SKILL_ADVANCED_LABORATORY_OPERATION, 0)
+
+        # Calculate reactions slots (if Mass Reactions is trained)
+        if SKILL_MASS_REACTIONS in skills:
+            reactions_slots = 1  # Base slot
+            reactions_slots += skills.get(SKILL_MASS_REACTIONS, 0)
+            reactions_slots += skills.get(SKILL_ADVANCED_MASS_REACTIONS, 0)
+
+        # Count active jobs for this character
+        active_jobs = IndustryJob.objects.filter(
+            character_id=character_id,
+            status="active",
+        )
+
+        manufacturing_jobs = active_jobs.filter(activity_id=ACTIVITY_MANUFACTURING)
+        research_jobs = active_jobs.filter(
+            activity_id__in=[
+                ACTIVITY_RESEARCHING_TE,
+                ACTIVITY_RESEARCHING_ME,
+                ACTIVITY_COPYING,
+                ACTIVITY_INVENTION,
+            ]
+        )
+        reactions_jobs = active_jobs.filter(activity_id=ACTIVITY_REACTIONS)
+
+        manufacturing_used = manufacturing_jobs.count()
+        research_used = research_jobs.count()
+        reactions_used = reactions_jobs.count()
+
+        # Calculate available slots
+        manufacturing_available = max(0, manufacturing_slots - manufacturing_used)
+        research_available = max(0, research_slots - research_used)
+        reactions_available = max(0, reactions_slots - reactions_used)
+
+        # Calculate time to next free slot for each category
+        def get_next_free_time(jobs_qs):
+            """Get the earliest end_date from active jobs."""
+            if jobs_qs.exists():
+                earliest = jobs_qs.order_by("end_date").first()
+                if earliest and earliest.end_date:
+                    return earliest.end_date
+            return None
+
+        manufacturing_next_free = get_next_free_time(manufacturing_jobs)
+        research_next_free = get_next_free_time(research_jobs)
+        reactions_next_free = get_next_free_time(reactions_jobs)
+
+        # Format time remaining
+        def format_time_remaining(end_date):
+            """Format time until a date in human-readable format."""
+            if not end_date:
+                return None
+            now = timezone.now()
+            if end_date <= now:
+                return "Complete"
+            
+            delta = end_date - now
+            total_seconds = int(delta.total_seconds())
+            
+            # Handle very short durations
+            if total_seconds < 60:
+                return "< 1m"
+            
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            
+            if hours > 24:
+                days = hours // 24
+                hours = hours % 24
+                return f"{days}d {hours}h"
+            elif hours > 0:
+                return f"{hours}h {minutes}m"
+            else:
+                return f"{minutes}m"
+
+        # Add to character data
+        character_slots_data.append(
+            {
+                "character_id": character_id,
+                "character_name": character_name,
+                "manufacturing": {
+                    "total": manufacturing_slots,
+                    "used": manufacturing_used,
+                    "available": manufacturing_available,
+                    "utilization_percent": (
+                        int((manufacturing_used / manufacturing_slots) * 100)
+                        if manufacturing_slots > 0
+                        else 0
+                    ),
+                    "next_free": format_time_remaining(manufacturing_next_free),
+                },
+                "research": {
+                    "total": research_slots,
+                    "used": research_used,
+                    "available": research_available,
+                    "utilization_percent": (
+                        int((research_used / research_slots) * 100)
+                        if research_slots > 0
+                        else 0
+                    ),
+                    "next_free": format_time_remaining(research_next_free),
+                },
+                "reactions": {
+                    "total": reactions_slots,
+                    "used": reactions_used,
+                    "available": reactions_available,
+                    "utilization_percent": (
+                        int((reactions_used / reactions_slots) * 100)
+                        if reactions_slots > 0
+                        else 0
+                    ),
+                    "next_free": format_time_remaining(reactions_next_free),
+                },
+            }
+        )
+
+        # Update totals
+        total_manufacturing_slots += manufacturing_slots
+        total_manufacturing_used += manufacturing_used
+        total_research_slots += research_slots
+        total_research_used += research_used
+        total_reactions_slots += reactions_slots
+        total_reactions_used += reactions_used
+
+    # Apply sorting
+    sort_reverse = sort_order == "desc"
+    
+    if sort_by == "character_name":
+        character_slots_data.sort(
+            key=lambda x: x["character_name"], reverse=sort_reverse
+        )
+    elif sort_by == "manufacturing_avail":
+        character_slots_data.sort(
+            key=lambda x: x["manufacturing"]["available"], reverse=sort_reverse
+        )
+    elif sort_by == "research_avail":
+        character_slots_data.sort(
+            key=lambda x: x["research"]["available"], reverse=sort_reverse
+        )
+    elif sort_by == "reactions_avail":
+        character_slots_data.sort(
+            key=lambda x: x["reactions"]["available"], reverse=sort_reverse
+        )
+    elif sort_by == "utilization":
+        # Sort by average utilization across all categories
+        def avg_util(char_data):
+            total_util = 0
+            count = 0
+            for category in ["manufacturing", "research", "reactions"]:
+                if char_data[category]["total"] > 0:
+                    total_util += char_data[category]["utilization_percent"]
+                    count += 1
+            return total_util / count if count > 0 else 0
+        
+        character_slots_data.sort(key=avg_util, reverse=sort_reverse)
+    else:
+        # Default to character name
+        character_slots_data.sort(key=lambda x: x["character_name"])
+
+    context = build_nav_context(request)
+    context.update(
+        {
+            "character_slots_data": character_slots_data,
+            "total_characters": len(character_slots_data),
+            "total_manufacturing_slots": total_manufacturing_slots,
+            "total_manufacturing_used": total_manufacturing_used,
+            "total_manufacturing_available": total_manufacturing_slots
+            - total_manufacturing_used,
+            "total_research_slots": total_research_slots,
+            "total_research_used": total_research_used,
+            "total_research_available": total_research_slots - total_research_used,
+            "total_reactions_slots": total_reactions_slots,
+            "total_reactions_used": total_reactions_used,
+            "total_reactions_available": total_reactions_slots - total_reactions_used,
+            "scope": scope,
+            "is_corporation_scope": is_corporation_scope,
+            "has_corporate_perm": has_corporate_perm,
+            "current_sort": sort_by,
+            "current_order": sort_order,
+        }
+    )
+
+    return render(request, "indy_hub/industry/job_slots.html", context)
