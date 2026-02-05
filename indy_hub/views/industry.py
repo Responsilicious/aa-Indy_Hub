@@ -5634,7 +5634,7 @@ def industry_job_slots(request):
     SKILL_LABORATORY_OPERATION = 3406
     SKILL_ADVANCED_LABORATORY_OPERATION = 24624
     SKILL_MASS_REACTIONS = 45748
-    SKILL_ADVANCED_REACTIONS = 45749
+    SKILL_ADVANCED_MASS_REACTIONS = 45749
 
     # Define activity IDs for job categorization
     ACTIVITY_MANUFACTURING = 1
@@ -5686,7 +5686,7 @@ def industry_job_slots(request):
             if SKILL_MASS_REACTIONS in skills:
                 reactions_slots = 1  # Base slot
                 reactions_slots += skills.get(SKILL_MASS_REACTIONS, 0)
-                reactions_slots += skills.get(SKILL_ADVANCED_REACTIONS, 0)
+                reactions_slots += skills.get(SKILL_ADVANCED_MASS_REACTIONS, 0)
 
         except ESIClientError as e:
             logger.warning(
